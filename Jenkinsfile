@@ -1,8 +1,8 @@
 pipeline {
-  agent {
-    kubernetes {
-      label 'jenkins-agent-flask'
-      yaml '''
+    agent {
+        kubernetes {
+            inheritFrom 'default'
+            yaml """
 apiVersion: v1
 kind: Pod
 metadata:
@@ -15,17 +15,21 @@ spec:
     command:
     - cat
     tty: true
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "250m"
+      limits:
+        memory: "512Mi"
+        cpu: "500m"
   - name: kaniko
-    image: gcr.io/kaniko-project/executor:latest
+    image: gcr.io/kaniko-project/executor:debug
     command:
     - /busybox/cat
     tty: true
-    # 👇 AJOUTE CES TROIS LIGNES ICI POUR DONNER LES DROITS D'ACCÈS
-    securityContext:
-      privileged: true
     volumeMounts:
-    - mountPath: /kaniko/.docker
-      name: kaniko-secret
+    - name: kaniko-secret
+      mountPath: /kaniko/.docker
   - name: kubectl
     image: bitnami/kubectl:latest
     command:
@@ -34,62 +38,56 @@ spec:
   volumes:
   - name: kaniko-secret
     emptyDir: {}
-'''
+"""
+        }
     }
 
-  }
-
-  triggers {
+    triggers {
         pollSCM('* * * * *')
     }
 
-  stages {
-    stage('Test') {
-      steps {
-        container('python') {
-          sh 'pip install -r requirements.txt'
-          sh 'python test.py'
+    stages {
+
+        stage('Test') {
+            steps {
+                container('python') {
+                    sh "pip install -r requirements.txt"
+                    sh "python test.py"
+                }
+            }
         }
 
-      }
-    }
-
-    stage('Build Image') {
-      steps {
-        container('kaniko') {
-          sh """
-            /kaniko/executor \
-            --context=dir://\${WORKSPACE} \
-            --dockerfile=\${WORKSPACE}/Dockerfile \
-            --destination=localhost:4000/flask_hello:latest \
-            --insecure \
-            --skip-tls-verify
-          """
+        stage('Build Image') {
+            steps {
+                container('kaniko') {
+                    sh """
+                        /kaniko/executor \
+                        --context=dir://\${WORKSPACE} \
+                        --dockerfile=\${WORKSPACE}/Dockerfile \
+                        --destination=localhost:4000/flask_hello:latest \
+                        --insecure \
+                        --skip-tls-verify
+                    """
+                }
+            }
         }
 
-      }
-    }
-
-    stage('Deploy') {
-      steps {
-        container('kubectl') {
-          sh 'kubectl apply -f ./kubernetes/deployment.yaml'
-          sh 'kubectl apply -f ./kubernetes/service.yaml'
+        stage('Deploy') {
+            steps {
+                container('kubectl') {
+                    sh "kubectl apply -f ./kubernetes/deployment.yaml"
+                    sh "kubectl apply -f ./kubernetes/service.yaml"
+                }
+            }
         }
-
-      }
     }
 
-  }
-  post {
-    success {
-      echo '✅ Pipeline réussi !'
+    post {
+        success {
+            echo '✅ Pipeline réussi !'
+        }
+        failure {
+            echo '❌ Pipeline en échec !'
+        }
     }
-
-    failure {
-      echo '❌ Pipeline en échec !'
-    }
-
-  }
-
 }
