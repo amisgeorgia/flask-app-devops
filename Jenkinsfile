@@ -15,34 +15,38 @@ spec:
     command:
     - cat
     tty: true
-  - name: docker
-    image: docker:24-dind
+  - name: kaniko
+    image: gcr.io/kaniko-project/executor:latest
     command:
-    - cat
+    - /busybox/cat
     tty: true
     # 👇 AJOUTE CES TROIS LIGNES ICI POUR DONNER LES DROITS D'ACCÈS
     securityContext:
       privileged: true
     volumeMounts:
-    - mountPath: /var/run/docker.sock
-      name: docker-sock
+    - mountPath: /kaniko/.docker
+      name: kaniko-secret
   - name: kubectl
     image: bitnami/kubectl:latest
     command:
     - cat
     tty: true
   volumes:
-  - name: docker-sock
-    hostPath:
-      path: /var/run/docker.sock
+  - name: kaniko-secret
+    emptyDir: {}
 '''
     }
 
   }
+
+  triggers {
+        pollSCM('* * * * *')
+    }
+
   stages {
     stage('Test') {
       steps {
-        container(name: 'python') {
+        container('python') {
           sh 'pip install -r requirements.txt'
           sh 'python test.py'
         }
@@ -52,9 +56,15 @@ spec:
 
     stage('Build Image') {
       steps {
-        container(name: 'docker') {
-          sh 'docker build -t localhost:4000/flask_hello:latest .'
-          sh 'docker push localhost:4000/flask_hello:latest'
+        container('kaniko') {
+          sh """
+            /kaniko/executor \
+            --context=dir://\${WORKSPACE} \
+            --dockerfile=\${WORKSPACE}/Dockerfile \
+            --destination=localhost:4000/flask_hello:latest \
+            --insecure \
+            --skip-tls-verify
+          """
         }
 
       }
@@ -62,7 +72,7 @@ spec:
 
     stage('Deploy') {
       steps {
-        container(name: 'kubectl') {
+        container('kubectl') {
           sh 'kubectl apply -f ./kubernetes/deployment.yaml'
           sh 'kubectl apply -f ./kubernetes/service.yaml'
         }
@@ -81,7 +91,5 @@ spec:
     }
 
   }
-  triggers {
-    pollSCM('* * * * *')
-  }
+
 }
